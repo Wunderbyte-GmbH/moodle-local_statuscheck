@@ -80,7 +80,7 @@ class get_system_status extends external_api {
         self::validate_context($context);
 
         // Require capability to view system status.
-        require_capability('moodle/site:config', $context);
+        require_capability('report/status:view', $context);
 
         // Get checks from manager.
         $manager = new manager();

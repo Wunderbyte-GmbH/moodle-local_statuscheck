@@ -16,7 +16,7 @@ A Moodle local plugin that provides web service API endpoints for retrieving sys
 - Moodle 4.5 or later
 - PHP 7.4 or later
 - Web services enabled
-- User with `moodle/site:config` capability
+- User with `report/status:view` capability
 
 ## Installation
 
@@ -54,7 +54,7 @@ Then visit **Site administration → Notifications** to complete installation.
 
 1. Create a dedicated user account for API access (recommended)
 2. Navigate to **Site administration → Users → Permissions → Assign system roles**
-3. Assign **Manager** role or create custom role with `moodle/site:config` capability
+3. Assign **Manager** role or create custom role with `report/status:view` capability
 
 ### 4. Generate Web Service Token
 
@@ -290,7 +290,7 @@ moodle_health_status{instance="production"} < 1
 **Solution**:
 - Verify web services are enabled
 - Check the token is valid and not expired
-- Ensure the user has `moodle/site:config` capability
+- Ensure the user has `report/status:view` capability
 - Verify the service is enabled
 
 ### No Results Returned

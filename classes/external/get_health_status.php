@@ -67,7 +67,7 @@ class get_health_status extends external_api {
         self::validate_context($context);
 
         // Require capability.
-        require_capability('moodle/site:config', $context);
+        require_capability('report/status:view', $context);
 
         $manager = new manager();
         $checks = array_merge(

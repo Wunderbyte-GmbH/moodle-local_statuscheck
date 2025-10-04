@@ -30,7 +30,7 @@ $functions = [
         'methodname'    => 'execute',
         'description'   => 'Get system status checks',
         'type'          => 'read',
-        'capabilities'  => 'moodle/site:config',
+        'capabilities'  => 'report/status:view',
         'ajax'          => true,
         'loginrequired' => true,
     ],
