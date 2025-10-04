@@ -14,7 +14,7 @@ A Moodle local plugin that provides web service API endpoints for retrieving sys
 ## Requirements
 
 - Moodle 4.5 or later
-- PHP 7.4 or later
+- PHP 8.1 or later
 - Web services enabled
 - User with `report/status:view` capability
 
