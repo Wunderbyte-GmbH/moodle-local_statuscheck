@@ -364,15 +364,14 @@ You should have received a copy of the GNU General Public License along with thi
 
 ## Support
 
-- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/yourusername/moodle-local_statuscheck/issues)
-- **Documentation**: Full documentation available in the [Wiki](https://github.com/yourusername/moodle-local_statuscheck/wiki)
-- **Moodle Forums**: Ask questions in the [Moodle Community Forums](https://moodle.org/mod/forum/)
+- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/Wunderbyte-GmbH/moodle-local_statuscheck/issues)
+- **Documentation**: Full documentation available in the [Wiki](https://github.com/Wunderbyte-GmbH/moodle-local_statuscheck/wiki)
 
 ## Credits
 
-- **Author**: Your Name
-- **Copyright**: 2025 Your Organization
-- **Maintainer**: Your Name <your.email@example.com>
+- **Author**: David Bogner
+- **Copyright**: 2025 Wunderbyte GmbH
+- **Maintainer**: David Bogner <david.bogner@gmail.com>
 
 ## Changelog
 
