@@ -332,18 +332,6 @@ local/statuscheck/
 └── README.md
 ```
 
-### Running Tests
-
-```bash
-# Run PHPUnit tests
-php admin/tool/phpunit/cli/init.php
-vendor/bin/phpunit --group local_statuscheck
-
-# Run Behat tests
-php admin/tool/behat/cli/init.php
-vendor/bin/behat --tags @local_statuscheck
-```
-
 ### Contributing
 
 Contributions are welcome! Please:
