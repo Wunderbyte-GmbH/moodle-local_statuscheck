@@ -72,7 +72,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $this->assertSame('installed', $indexed['mod_assign']['status']);
         $this->assertGreaterThan(0, $indexed['mod_assign']['version']);
         $this->assertNotSame('', $indexed['mod_assign']['displayname']);
-        $this->assertContains($indexed['mod_assign']['installation_source'], ['git', 'zip', 'unknown']);
+        $this->assertContains($indexed['mod_assign']['installation_source'], ['git', 'zip']);
     }
 
     /**
@@ -152,7 +152,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $this->assertSame('not_installed', $indexed[self::ABSENT_COMPONENT]['status']);
         $this->assertSame(0, $indexed[self::ABSENT_COMPONENT]['version']);
         $this->assertSame('', $indexed[self::ABSENT_COMPONENT]['displayname']);
-        $this->assertSame('unknown', $indexed[self::ABSENT_COMPONENT]['installation_source']);
+        $this->assertSame('zip', $indexed[self::ABSENT_COMPONENT]['installation_source']);
     }
 
     /**
@@ -185,7 +185,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
 
         $this->assertSame('missing_from_disk', $indexed[self::ABSENT_COMPONENT]['status']);
         $this->assertSame(2023010100, $indexed[self::ABSENT_COMPONENT]['version']);
-        $this->assertSame('unknown', $indexed[self::ABSENT_COMPONENT]['installation_source']);
+        $this->assertSame('zip', $indexed[self::ABSENT_COMPONENT]['installation_source']);
     }
 
     /**
@@ -238,65 +238,65 @@ final class get_plugin_inventory_test extends advanced_testcase {
 
         $entry = $clean['plugins'][0];
         $this->assertSame(
-            ['component', 'displayname', 'version', 'status', 'installation_source', 'is_standard'],
+            ['component', 'displayname', 'version', 'status', 'installation_source', 'git_branch', 'is_standard'],
             array_keys($entry)
         );
     }
 
     /**
-     * Installation source: an own Git checkout (.git directory) is detected.
+     * Installation source + branch: an own Git checkout (.git directory).
      */
     public function test_source_git_checkout(): void {
         $dir = make_request_directory();
         mkdir($dir . '/.git');
+        file_put_contents($dir . '/.git/HEAD', "ref: refs/heads/main\n");
 
         $this->assertSame('git', $this->call_detect_source($dir));
+        $this->assertSame('main', $this->call_git_branch($dir));
     }
 
     /**
-     * Installation source: a Git submodule (.git file pointer) is detected.
+     * A detached HEAD (bare commit hash) is still git, but reports no branch.
+     */
+    public function test_source_git_detached_head(): void {
+        $dir = make_request_directory();
+        mkdir($dir . '/.git');
+        file_put_contents($dir . '/.git/HEAD', "0123456789abcdef0123456789abcdef01234567\n");
+
+        $this->assertSame('git', $this->call_detect_source($dir));
+        $this->assertSame('', $this->call_git_branch($dir));
+    }
+
+    /**
+     * Installation source + branch: a Git submodule (.git file gitdir pointer).
      */
     public function test_source_git_submodule(): void {
         $dir = make_request_directory();
-        file_put_contents($dir . '/.git', "gitdir: ../../.git/modules/local/statuscheck\n");
+        $realgit = make_request_directory();
+        file_put_contents($realgit . '/HEAD', "ref: refs/heads/feature/x\n");
+        file_put_contents($dir . '/.git', "gitdir: $realgit\n");
 
         $this->assertSame('git', $this->call_detect_source($dir));
+        $this->assertSame('feature/x', $this->call_git_branch($dir));
     }
 
     /**
-     * Installation source: a trusted ZIP deployment manifest is detected.
+     * Code present on disk but not under Git is reported as a zip/package install.
      */
-    public function test_source_zip_manifest(): void {
+    public function test_source_zip_when_not_git(): void {
         $dir = make_request_directory();
-        file_put_contents($dir . '/.moodle_plugin_source.json', json_encode(['source' => 'zip']));
+        file_put_contents($dir . '/version.php', "<?php\n");
 
         $this->assertSame('zip', $this->call_detect_source($dir));
+        $this->assertSame('', $this->call_git_branch($dir));
     }
 
     /**
-     * Installation source: a manifest that does not confirm ZIP is not trusted.
+     * A non-existent directory defaults to zip (never unknown), with no branch.
      */
-    public function test_source_manifest_without_zip_is_unknown(): void {
-        $dir = make_request_directory();
-        file_put_contents($dir . '/.moodle_plugin_source.json', json_encode(['source' => 'something']));
-
-        $this->assertSame('unknown', $this->call_detect_source($dir));
-    }
-
-    /**
-     * Installation source: no Git metadata and no manifest is unknown, never zip.
-     */
-    public function test_source_unknown_when_no_evidence(): void {
-        $dir = make_request_directory();
-
-        $this->assertSame('unknown', $this->call_detect_source($dir));
-    }
-
-    /**
-     * Installation source: a non-existent directory resolves to unknown.
-     */
-    public function test_source_unknown_for_missing_dir(): void {
-        $this->assertSame('unknown', $this->call_detect_source('/this/path/does/not/exist'));
+    public function test_source_zip_for_missing_dir(): void {
+        $this->assertSame('zip', $this->call_detect_source('/this/path/does/not/exist'));
+        $this->assertSame('', $this->call_git_branch('/this/path/does/not/exist'));
     }
 
     /**
@@ -392,6 +392,18 @@ final class get_plugin_inventory_test extends advanced_testcase {
      */
     private function call_detect_source(string $rootdir): string {
         $method = new \ReflectionMethod(get_plugin_inventory::class, 'detect_installation_source');
+        $method->setAccessible(true);
+        return $method->invoke(null, $rootdir);
+    }
+
+    /**
+     * Invoke the private static detect_git_branch() for a directory.
+     *
+     * @param string $rootdir Directory to inspect.
+     * @return string
+     */
+    private function call_git_branch(string $rootdir): string {
+        $method = new \ReflectionMethod(get_plugin_inventory::class, 'detect_git_branch');
         $method->setAccessible(true);
         return $method->invoke(null, $rootdir);
     }

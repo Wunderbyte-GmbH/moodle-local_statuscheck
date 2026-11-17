@@ -58,14 +58,8 @@ class get_plugin_inventory extends external_api {
     /** @var string Deployed as its own Git checkout or a Git submodule. */
     const SOURCE_GIT = 'git';
 
-    /** @var string A trusted deployment manifest confirms a ZIP installation. */
+    /** @var string Anything not tracked by Git: installed as a package / ZIP (the default). */
     const SOURCE_ZIP = 'zip';
-
-    /** @var string The installation source could not be verified. */
-    const SOURCE_UNKNOWN = 'unknown';
-
-    /** @var string Deployment manifest filename that may confirm a ZIP install. */
-    const SOURCE_MANIFEST = '.moodle_plugin_source.json';
 
     /**
      * Returns description of method parameters.
@@ -175,7 +169,8 @@ class get_plugin_inventory extends external_api {
                 'displayname' => '',
                 'version' => 0,
                 'status' => self::STATUS_NOT_INSTALLED,
-                'installation_source' => self::SOURCE_UNKNOWN,
+                'installation_source' => self::SOURCE_ZIP,
+                'git_branch' => '',
                 'is_standard' => $isstandard,
             ];
         }
@@ -189,17 +184,23 @@ class get_plugin_inventory extends external_api {
                 'displayname' => $displayname,
                 'version' => $recordedversion !== null ? $recordedversion : 0,
                 'status' => self::STATUS_MISSING_FROM_DISK,
-                'installation_source' => self::SOURCE_UNKNOWN,
+                'installation_source' => self::SOURCE_ZIP,
+                'git_branch' => '',
                 'is_standard' => $isstandard,
             ];
         }
+
+        $rootdir = (string) $info->rootdir;
+        $source = self::detect_installation_source($rootdir);
+        $branch = ($source === self::SOURCE_GIT) ? self::detect_git_branch($rootdir) : '';
 
         return [
             'component' => $component,
             'displayname' => $displayname,
             'version' => $recordedversion !== null ? $recordedversion : $versiondisk,
             'status' => self::STATUS_INSTALLED,
-            'installation_source' => self::detect_installation_source((string) $info->rootdir),
+            'installation_source' => $source,
+            'git_branch' => $branch,
             'is_standard' => $isstandard,
         ];
     }
@@ -207,45 +208,100 @@ class get_plugin_inventory extends external_api {
     /**
      * Determine the installation source of a plugin using local evidence only.
      *
-     * Rules (conservative by design):
-     * - 'git'     when the plugin directory is its own Git checkout (a .git
-     *             directory) or a Git submodule (a .git file). The enclosing
-     *             Moodle repository alone is not evidence, because its .git lives
-     *             at the Moodle root, not inside the plugin directory.
-     * - 'zip'     only when a trusted deployment manifest inside the plugin
-     *             directory explicitly records a ZIP installation.
-     * - 'unknown' otherwise. The absence of Git metadata is NOT treated as ZIP.
+     * Rules:
+     * - 'git' when the plugin directory is its own Git checkout (a .git directory)
+     *         or a Git submodule (a .git file). The enclosing Moodle repository
+     *         alone is not evidence, because its .git lives at the Moodle root, not
+     *         inside the plugin directory.
+     * - 'zip' for everything else: code present on disk but not tracked by Git
+     *         (installed as a package / ZIP). This is also the default when the
+     *         directory cannot be inspected.
      *
      * No shell commands are executed and no remote Git requests are made; only
      * local filesystem metadata resolved through the plugin manager is read.
      *
      * @param string $rootdir Absolute plugin directory resolved via the plugin manager.
-     * @return string One of SOURCE_GIT, SOURCE_ZIP, SOURCE_UNKNOWN.
+     * @return string SOURCE_GIT or SOURCE_ZIP.
      */
     private static function detect_installation_source($rootdir) {
         $rootdir = (string) $rootdir;
-        if ($rootdir === '' || !is_dir($rootdir)) {
-            return self::SOURCE_UNKNOWN;
-        }
 
         // Own Git checkout (.git dir) or Git submodule (.git file) in the plugin dir.
-        if (file_exists($rootdir . DIRECTORY_SEPARATOR . '.git')) {
+        if ($rootdir !== '' && is_dir($rootdir) && file_exists($rootdir . DIRECTORY_SEPARATOR . '.git')) {
             return self::SOURCE_GIT;
         }
 
-        // Trusted deployment manifest confirming a ZIP installation.
-        $manifest = $rootdir . DIRECTORY_SEPARATOR . self::SOURCE_MANIFEST;
-        if (is_file($manifest) && is_readable($manifest)) {
-            $raw = file_get_contents($manifest, false, null, 0, 65536);
-            if ($raw !== false) {
-                $data = json_decode($raw, true);
-                if (is_array($data) && isset($data['source']) && $data['source'] === self::SOURCE_ZIP) {
-                    return self::SOURCE_ZIP;
+        // Not under Git: treat as a package/ZIP installation.
+        return self::SOURCE_ZIP;
+    }
+
+    /**
+     * Read the checked-out Git branch of a plugin directory from local metadata.
+     *
+     * Reads only .git/HEAD (following a submodule's .git-file gitdir pointer).
+     * No shell commands, no remote requests. Returns the branch name only — never
+     * a path, remote URL or commit hash. Empty when the branch cannot be
+     * determined (e.g. a detached HEAD) or when the directory is not a Git checkout.
+     *
+     * @param string $rootdir Absolute plugin directory resolved via the plugin manager.
+     * @return string Branch name, or '' when not determinable.
+     */
+    private static function detect_git_branch($rootdir) {
+        $rootdir = (string) $rootdir;
+        if ($rootdir === '' || !is_dir($rootdir)) {
+            return '';
+        }
+
+        $gitpath = $rootdir . DIRECTORY_SEPARATOR . '.git';
+        $gitdir = '';
+
+        if (is_dir($gitpath)) {
+            // Own checkout: .git is the git directory.
+            $gitdir = $gitpath;
+        } else if (is_file($gitpath) && is_readable($gitpath)) {
+            // Submodule: .git is a file pointing at the real git directory.
+            $raw = (string) file_get_contents($gitpath, false, null, 0, 4096);
+            if (preg_match('/^gitdir:\s*(.+)$/m', $raw, $m)) {
+                $target = trim($m[1]);
+                // Resolve a relative gitdir against the plugin directory.
+                if (!self::is_absolute_path($target)) {
+                    $target = $rootdir . DIRECTORY_SEPARATOR . $target;
                 }
+                $resolved = realpath($target);
+                $gitdir = ($resolved !== false) ? $resolved : '';
             }
         }
 
-        return self::SOURCE_UNKNOWN;
+        if ($gitdir === '' || !is_dir($gitdir)) {
+            return '';
+        }
+
+        $head = $gitdir . DIRECTORY_SEPARATOR . 'HEAD';
+        if (!is_file($head) || !is_readable($head)) {
+            return '';
+        }
+
+        $content = trim((string) file_get_contents($head, false, null, 0, 4096));
+        // "ref: refs/heads/<branch>" for an attached HEAD; a bare hash means detached.
+        if (preg_match('#^ref:\s*refs/heads/(.+)$#', $content, $m)) {
+            return trim($m[1]);
+        }
+
+        return '';
+    }
+
+    /**
+     * Whether a filesystem path is absolute (POSIX or Windows drive/UNC).
+     *
+     * @param string $path Path to test.
+     * @return bool
+     */
+    private static function is_absolute_path($path) {
+        return $path !== '' && (
+            $path[0] === '/'
+            || preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1
+            || strncmp($path, '\\\\', 2) === 0
+        );
     }
 
     /**
@@ -266,7 +322,11 @@ class get_plugin_inventory extends external_api {
                     ),
                     'installation_source' => new external_value(
                         PARAM_ALPHA,
-                        'One of: git, zip, unknown'
+                        'One of: git, zip'
+                    ),
+                    'git_branch' => new external_value(
+                        PARAM_TEXT,
+                        'Checked-out Git branch when installation_source is git; empty otherwise'
                     ),
                     'is_standard' => new external_value(
                         PARAM_BOOL,

@@ -127,7 +127,8 @@ tokens issued before the upgrade can call it without being reissued.
     - `installed` — code present on disk and registered in the database
     - `not_installed` — a valid component that is absent from this site
     - `missing_from_disk` — recorded in the database but the code is gone (the recorded `version` is still reported)
-- `installation_source`: One of `git`, `zip`, `unknown` (see [Installation source](#installation-source-determination))
+- `installation_source`: `git` or `zip` (see [Installation source](#installation-source-determination))
+- `git_branch`: the checked-out Git branch when `installation_source` is `git`; empty otherwise
 - `is_standard`: `true` if the plugin ships with core Moodle (standard), `false` if it is additional/third-party
 
 The response is intentionally limited to inventory fields. Absolute paths, Git
@@ -273,6 +274,7 @@ is deployed as a Git submodule:
       "version": 2024093000,
       "status": "installed",
       "installation_source": "git",
+      "git_branch": "main",
       "is_standard": false
     },
     {
@@ -280,7 +282,8 @@ is deployed as a Git submodule:
       "displayname": "",
       "version": 0,
       "status": "not_installed",
-      "installation_source": "unknown",
+      "installation_source": "zip",
+      "git_branch": "",
       "is_standard": false
     }
   ]
@@ -298,7 +301,8 @@ from disk is reported explicitly, with its recorded version preserved:
       "displayname": "Old widget",
       "version": 2023061500,
       "status": "missing_from_disk",
-      "installation_source": "unknown",
+      "installation_source": "zip",
+      "git_branch": "",
       "is_standard": false
     }
   ]
@@ -307,15 +311,19 @@ from disk is reported explicitly, with its recorded version preserved:
 
 ### Installation source determination
 
-`installation_source` is derived only from **local filesystem evidence** resolved
+`installation_source` is always either `git` or `zip`. It is derived only from **local filesystem evidence** resolved
 through Moodle's plugin manager. No shell commands are run and no remote Git
 requests are made while serving the request.
 
 | Value | How it is determined |
 |-------|----------------------|
 | `git` | The plugin's own directory contains Git metadata — a `.git` **directory** (its own checkout) or a `.git` **file** (a Git submodule). The enclosing Moodle repository alone is **not** evidence, because that `.git` lives at the Moodle root, not inside the plugin directory. |
-| `zip` | A trusted deployment manifest, `.moodle_plugin_source.json`, exists in the plugin directory and contains `{"source": "zip"}`. This file is written by a ZIP-based deployment process; it is the only signal treated as proof of a ZIP install. |
-| `unknown` | None of the above could be verified. The **absence** of Git metadata is deliberately **not** treated as a ZIP installation. |
+| `zip` | Everything else: the plugin code is present but not tracked by Git, i.e. installed as a package / ZIP. This is also the default when the directory cannot be inspected. |
+
+When `installation_source` is `git`, `git_branch` is read from the checkout's
+`.git/HEAD` (following a submodule's `.git`-file `gitdir:` pointer). It reports the
+branch name only — never a path, remote URL or commit hash — and is empty for a
+detached HEAD. For `zip` plugins `git_branch` is empty.
 
 ## Integration Examples
 
@@ -508,7 +516,7 @@ You should have received a copy of the GNU General Public License along with thi
 ### Version 1.1 (2026-11-17)
 
 - Added read-only `local_statuscheck_get_plugin_inventory` web service function
-- Reports component, display name, installed version, install status and installation source (`git`/`zip`/`unknown`) per plugin
+- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch and whether the plugin is standard/additional
 - Supports single-plugin, multi-plugin and full-inventory lookups
 - Added to the existing **Status Check Service** (service identity preserved — pre-upgrade tokens keep working)
 - No change to the existing system status and health check endpoints
