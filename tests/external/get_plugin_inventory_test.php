@@ -58,6 +58,18 @@ final class get_plugin_inventory_test extends advanced_testcase {
     }
 
     /**
+     * The component names nested as subplugins of a top-level entry.
+     *
+     * @param array $entry A top-level plugin entry.
+     * @return string[]
+     */
+    private function subplugin_components(array $entry): array {
+        return array_map(static function ($sub) {
+            return $sub['component'];
+        }, $entry['subplugins']);
+    }
+
+    /**
      * A single installed plugin is reported with its details.
      */
     public function test_single_installed_plugin(): void {
@@ -73,6 +85,8 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $this->assertGreaterThan(0, $indexed['mod_assign']['version']);
         $this->assertNotSame('', $indexed['mod_assign']['displayname']);
         $this->assertContains($indexed['mod_assign']['installation_source'], ['git', 'zip']);
+        // mod_assign's subplugins are nested inside it.
+        $this->assertContains('assignsubmission_file', $this->subplugin_components($indexed['mod_assign']));
     }
 
     /**
@@ -103,7 +117,8 @@ final class get_plugin_inventory_test extends advanced_testcase {
     }
 
     /**
-     * Omitting the parameter returns only additional (non-standard) plugins by default.
+     * By default the full inventory returns the Moodle overview's "Additional
+     * plugins" set: non-standard plugins only, at the top level.
      */
     public function test_full_inventory_additional_only(): void {
         $this->resetAfterTest();
@@ -112,18 +127,26 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $result = get_plugin_inventory::execute();
         $indexed = $this->by_component($result);
 
-        // The plugin under test is additional, so it is present...
+        // The plugin under test is additional, so it is present at the top level...
         $this->assertArrayHasKey('local_statuscheck', $indexed);
-        // ...while core/standard plugins (e.g. mod_assign) are excluded by default.
+        $this->assertFalse($indexed['local_statuscheck']['is_subplugin']);
+        $this->assertSame([], $indexed['local_statuscheck']['subplugins']);
+        // ...while core/standard plugins (and their subplugins) are excluded.
         $this->assertArrayNotHasKey('mod_assign', $indexed);
-        // Everything returned is non-standard.
+        $this->assertArrayNotHasKey('assignsubmission_file', $indexed);
+        // Every top-level entry is non-standard, and every nested subplugin too.
         foreach ($result['plugins'] as $entry) {
-            $this->assertFalse($entry['is_standard']);
+            $this->assertFalse($entry['is_standard'], $entry['component'] . ' should not be standard');
+            foreach ($entry['subplugins'] as $sub) {
+                $this->assertFalse($sub['is_standard'], $sub['component'] . ' should not be standard');
+                $this->assertTrue($sub['is_subplugin'], $sub['component'] . ' should be a subplugin');
+            }
         }
     }
 
     /**
-     * includestandard=true adds the Moodle standard plugins back into the full inventory.
+     * includestandard=true returns every plugin, including standard plugins and
+     * subplugins.
      */
     public function test_full_inventory_includes_standard_on_request(): void {
         $this->resetAfterTest();
@@ -137,6 +160,9 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $this->assertArrayHasKey('local_statuscheck', $indexed);
         $this->assertTrue($indexed['mod_assign']['is_standard']);
         $this->assertFalse($indexed['local_statuscheck']['is_standard']);
+        // Subplugins are nested inside their parent, not listed at the top level.
+        $this->assertArrayNotHasKey('assignsubmission_file', $indexed);
+        $this->assertContains('assignsubmission_file', $this->subplugin_components($indexed['mod_assign']));
     }
 
     /**
@@ -236,11 +262,16 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $raw = get_plugin_inventory::execute(['mod_assign']);
         $clean = \core_external\external_api::clean_returnvalue(get_plugin_inventory::execute_returns(), $raw);
 
+        $basefields = ['component', 'displayname', 'version', 'status', 'installation_source',
+            'git_branch', 'git_remote', 'is_standard', 'is_subplugin'];
+
+        // A top-level entry has the base fields plus a nested subplugins list.
         $entry = $clean['plugins'][0];
-        $this->assertSame(
-            ['component', 'displayname', 'version', 'status', 'installation_source', 'git_branch', 'git_remote', 'is_standard'],
-            array_keys($entry)
-        );
+        $this->assertSame(array_merge($basefields, ['subplugins']), array_keys($entry));
+
+        // A nested subplugin entry has only the base fields (no further nesting).
+        $this->assertNotEmpty($entry['subplugins']);
+        $this->assertSame($basefields, array_keys($entry['subplugins'][0]));
     }
 
     /**

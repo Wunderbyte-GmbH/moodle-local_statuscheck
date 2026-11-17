@@ -113,11 +113,11 @@ tokens issued before the upgrade can call it without being reissued.
 
 **Parameters:**
 - `plugins` (array of component names, optional): e.g. `mod_booking`, `auth_saml2`
-    - **Omit** the parameter to return the full inventory. By default this is only the **additional (third-party) plugins** — i.e. the ones you installed — matching the "Additional plugins" section of the Moodle plugin overview. Moodle standard/core plugins are excluded unless `includestandard=1`.
-    - Provide a **one-item** list for a single-plugin lookup.
+    - **Omit** the parameter to return the full inventory. By default this is the **"Additional plugins"** set from the Moodle plugin overview page: every non-standard (third-party) plugin, with each plugin's **subplugins nested inside it** (under a `subplugins` array). Moodle standard/core plugins are excluded. Set `includestandard=1` to return every plugin instead.
+    - Provide a **one-item** list for a single-plugin lookup (its subplugins are nested inside it).
     - Provide **several** items to look up multiple plugins.
-    - A plugin named explicitly is always returned, even if it is a standard plugin.
-- `includestandard` (boolean, optional, default `0`): only affects the full inventory. Set to `1` to also include Moodle standard/core-shipped plugins. Ignored when a `plugins` list is supplied.
+    - A plugin named explicitly is always returned, even if it is standard or a subplugin.
+- `includestandard` (boolean, optional, default `0`): only affects the full inventory. Set to `1` to return **every** plugin — Moodle standard/core plugins included (subplugins still nested under their parent). Ignored when a `plugins` list is supplied.
 
 **Returns:** `plugins` — an array of entries, each with:
 - `component`: Moodle component name (e.g. `mod_booking`)
@@ -131,9 +131,12 @@ tokens issued before the upgrade can call it without being reissued.
 - `git_branch`: the checked-out Git branch when `installation_source` is `git`; empty otherwise
 - `git_remote`: the Git remote URL (with any embedded credentials stripped) when `installation_source` is `git`; empty otherwise
 - `is_standard`: `true` if the plugin ships with core Moodle (standard), `false` if it is additional/third-party
+- `is_subplugin`: `true` if the plugin is a subplugin of a parent plugin
+- `subplugins`: an array of the plugin's subplugins (each with the same fields as above, except `subplugins`); empty when the plugin has none. Subplugins appear here, nested under their parent, rather than at the top level.
 
-The response is intentionally limited to inventory fields. Absolute paths, Git
-remote URLs, configuration values and credentials are never included.
+The response is intentionally limited to inventory fields. Absolute paths,
+configuration values and credentials are never included (Git remote URLs are
+returned with any embedded credentials stripped).
 
 ### API Examples
 
@@ -277,7 +280,21 @@ is deployed as a Git submodule:
       "installation_source": "git",
       "git_branch": "main",
       "git_remote": "https://github.com/example/moodle-mod_booking.git",
-      "is_standard": false
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": [
+        {
+          "component": "bookingcondition_example",
+          "displayname": "Example condition",
+          "version": 2024093000,
+          "status": "installed",
+          "installation_source": "git",
+          "git_branch": "main",
+          "git_remote": "https://github.com/example/moodle-mod_booking.git",
+          "is_standard": false,
+          "is_subplugin": true
+        }
+      ]
     },
     {
       "component": "auth_saml2",
@@ -287,7 +304,9 @@ is deployed as a Git submodule:
       "installation_source": "zip",
       "git_branch": "",
       "git_remote": "",
-      "is_standard": false
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": []
     }
   ]
 }
@@ -307,7 +326,9 @@ from disk is reported explicitly, with its recorded version preserved:
       "installation_source": "zip",
       "git_branch": "",
       "git_remote": "",
-      "is_standard": false
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": []
     }
   ]
 }
@@ -523,7 +544,8 @@ You should have received a copy of the GNU General Public License along with thi
 ### Version 1.1 (2026-11-17)
 
 - Added read-only `local_statuscheck_get_plugin_inventory` web service function
-- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch, git remote (credentials stripped) and whether the plugin is standard/additional
+- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch, git remote (credentials stripped), and whether the plugin is standard and/or a subplugin
+- Full inventory defaults to the overview page's "Additional plugins" set (every non-standard plugin), with subplugins nested inside their parent plugin
 - Supports single-plugin, multi-plugin and full-inventory lookups
 - Added to the existing **Status Check Service** (service identity preserved — pre-upgrade tokens keep working)
 - No change to the existing system status and health check endpoints

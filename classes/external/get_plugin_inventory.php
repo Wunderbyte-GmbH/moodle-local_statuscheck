@@ -116,28 +116,84 @@ class get_plugin_inventory extends external_api {
         $results = [];
 
         if (empty($requested)) {
-            // Full inventory. By default only additional (non-standard) plugins are
-            // returned, matching the "Additional plugins" section of the Moodle
-            // plugin overview; Moodle standard/core-shipped plugins are included
-            // only when the caller sets includestandard.
+            // Full inventory. By default this returns the Moodle plugin overview's
+            // "Additional plugins" set: every non-standard plugin, with subplugins
+            // nested inside their parent plugin. includestandard=1 returns every
+            // plugin (core included) in the same nested shape.
+            $nested = [];
+
+            // Pass 1: top-level (non-subplugin) plugins, each with its subplugins nested.
             foreach ($pluginman->get_plugins() as $pluginsbytype) {
                 foreach ($pluginsbytype as $info) {
+                    if ($info->is_subplugin()) {
+                        continue;
+                    }
                     if (!$includestandard && $info->is_standard()) {
                         continue;
                     }
-                    $results[] = self::build_entry($info->component, $info, $pluginman);
+                    $entry = self::build_entry($info->component, $info, $pluginman);
+                    $entry['subplugins'] = self::build_subplugins(
+                        $info->component, $pluginman, $includestandard, $nested);
+                    $results[] = $entry;
+                }
+            }
+
+            // Pass 2: any shown subplugin whose parent was not listed (e.g. a
+            // third-party subplugin of a core plugin) is returned at the top level
+            // so nothing in the "Additional plugins" set is lost.
+            foreach ($pluginman->get_plugins() as $pluginsbytype) {
+                foreach ($pluginsbytype as $info) {
+                    if (!$info->is_subplugin()) {
+                        continue;
+                    }
+                    if (!$includestandard && $info->is_standard()) {
+                        continue;
+                    }
+                    if (isset($nested[$info->component])) {
+                        continue;
+                    }
+                    $entry = self::build_entry($info->component, $info, $pluginman);
+                    $entry['subplugins'] = [];
+                    $results[] = $entry;
                 }
             }
         } else {
             // Specific components (deduplicated, order preserved). A named component
-            // is always returned regardless of whether it is standard.
+            // is always returned regardless of whether it is standard, with its own
+            // subplugins nested.
             foreach (array_values(array_unique($requested)) as $component) {
                 $info = $pluginman->get_plugin_info($component);
-                $results[] = self::build_entry($component, $info, $pluginman);
+                $entry = self::build_entry($component, $info, $pluginman);
+                $ignored = [];
+                $entry['subplugins'] = ($info !== null)
+                    ? self::build_subplugins($component, $pluginman, true, $ignored)
+                    : [];
+                $results[] = $entry;
             }
         }
 
         return ['plugins' => $results];
+    }
+
+    /**
+     * Build the nested subplugin entries for a parent plugin.
+     *
+     * @param string $component Parent plugin component.
+     * @param core_plugin_manager $pluginman Plugin manager instance.
+     * @param bool $includestandard Whether to include standard subplugins.
+     * @param array $seen Collects component => true for every subplugin returned.
+     * @return array List of inventory entries (base fields only).
+     */
+    private static function build_subplugins($component, core_plugin_manager $pluginman, $includestandard, array &$seen) {
+        $subs = [];
+        foreach ($pluginman->get_subplugins_of_plugin($component) as $subinfo) {
+            if (!$includestandard && $subinfo->is_standard()) {
+                continue;
+            }
+            $subs[] = self::build_entry($subinfo->component, $subinfo, $pluginman);
+            $seen[$subinfo->component] = true;
+        }
+        return $subs;
     }
 
     /**
@@ -161,6 +217,8 @@ class get_plugin_inventory extends external_api {
 
         // Standard = shipped with core Moodle; additional = third-party / installed.
         $isstandard = ($info !== null) ? (bool) $info->is_standard() : false;
+        // Subplugin = belongs to a parent plugin (e.g. assignsubmission_* of mod_assign).
+        $issubplugin = ($info !== null) ? (bool) $info->is_subplugin() : false;
 
         if ($recordedversion === null && $versiondisk === null) {
             // Valid component name but nothing installed for it.
@@ -173,6 +231,7 @@ class get_plugin_inventory extends external_api {
                 'git_branch' => '',
                 'git_remote' => '',
                 'is_standard' => $isstandard,
+                'is_subplugin' => $issubplugin,
             ];
         }
 
@@ -189,6 +248,7 @@ class get_plugin_inventory extends external_api {
                 'git_branch' => '',
                 'git_remote' => '',
                 'is_standard' => $isstandard,
+                'is_subplugin' => $issubplugin,
             ];
         }
 
@@ -207,6 +267,7 @@ class get_plugin_inventory extends external_api {
             'git_branch' => $branch,
             'git_remote' => $remote,
             'is_standard' => $isstandard,
+            'is_subplugin' => $issubplugin,
         ];
     }
 
@@ -381,38 +442,57 @@ class get_plugin_inventory extends external_api {
     }
 
     /**
+     * The common inventory fields shared by top-level plugins and subplugins.
+     *
+     * @return array field name => external_value
+     */
+    private static function entry_fields() {
+        return [
+            'component' => new external_value(PARAM_COMPONENT, 'Moodle component name'),
+            'displayname' => new external_value(PARAM_TEXT, 'Human-readable plugin name ("" if not installed)'),
+            'version' => new external_value(PARAM_INT, 'Installed version (0 if not installed)'),
+            'status' => new external_value(
+                PARAM_ALPHAEXT,
+                'One of: installed, not_installed, missing_from_disk'
+            ),
+            'installation_source' => new external_value(
+                PARAM_ALPHA,
+                'One of: git, zip'
+            ),
+            'git_branch' => new external_value(
+                PARAM_TEXT,
+                'Checked-out Git branch when installation_source is git; empty otherwise'
+            ),
+            'git_remote' => new external_value(
+                PARAM_RAW_TRIMMED,
+                'Git remote URL (credentials stripped) when installation_source is git; empty otherwise'
+            ),
+            'is_standard' => new external_value(
+                PARAM_BOOL,
+                'True if the plugin ships with core Moodle (standard); false if additional/third-party'
+            ),
+            'is_subplugin' => new external_value(
+                PARAM_BOOL,
+                'True if the plugin is a subplugin of a parent plugin'
+            ),
+        ];
+    }
+
+    /**
      * Returns description of method result value.
      *
      * @return external_single_structure
      */
     public static function execute_returns() {
+        $toplevel = self::entry_fields();
+        $toplevel['subplugins'] = new external_multiple_structure(
+            new external_single_structure(self::entry_fields()),
+            'Subplugins belonging to this plugin (empty when it has none)'
+        );
+
         return new external_single_structure([
             'plugins' => new external_multiple_structure(
-                new external_single_structure([
-                    'component' => new external_value(PARAM_COMPONENT, 'Moodle component name'),
-                    'displayname' => new external_value(PARAM_TEXT, 'Human-readable plugin name ("" if not installed)'),
-                    'version' => new external_value(PARAM_INT, 'Installed version (0 if not installed)'),
-                    'status' => new external_value(
-                        PARAM_ALPHAEXT,
-                        'One of: installed, not_installed, missing_from_disk'
-                    ),
-                    'installation_source' => new external_value(
-                        PARAM_ALPHA,
-                        'One of: git, zip'
-                    ),
-                    'git_branch' => new external_value(
-                        PARAM_TEXT,
-                        'Checked-out Git branch when installation_source is git; empty otherwise'
-                    ),
-                    'git_remote' => new external_value(
-                        PARAM_RAW_TRIMMED,
-                        'Git remote URL (credentials stripped) when installation_source is git; empty otherwise'
-                    ),
-                    'is_standard' => new external_value(
-                        PARAM_BOOL,
-                        'True if the plugin ships with core Moodle (standard); false if additional/third-party'
-                    ),
-                ])
+                new external_single_structure($toplevel)
             ),
         ]);
     }
