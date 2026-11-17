@@ -238,7 +238,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
 
         $entry = $clean['plugins'][0];
         $this->assertSame(
-            ['component', 'displayname', 'version', 'status', 'installation_source', 'git_branch', 'is_standard'],
+            ['component', 'displayname', 'version', 'status', 'installation_source', 'git_branch', 'git_remote', 'is_standard'],
             array_keys($entry)
         );
     }
@@ -250,9 +250,38 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $dir = make_request_directory();
         mkdir($dir . '/.git');
         file_put_contents($dir . '/.git/HEAD', "ref: refs/heads/main\n");
+        file_put_contents($dir . '/.git/config',
+            "[remote \"origin\"]\n\turl = https://github.com/example/plugin.git\n");
 
         $this->assertSame('git', $this->call_detect_source($dir));
         $this->assertSame('main', $this->call_git_branch($dir));
+        $this->assertSame('https://github.com/example/plugin.git', $this->call_git_remote($dir));
+    }
+
+    /**
+     * The git remote URL has any embedded credentials stripped.
+     */
+    public function test_git_remote_strips_credentials(): void {
+        $dir = make_request_directory();
+        mkdir($dir . '/.git');
+        file_put_contents($dir . '/.git/HEAD', "ref: refs/heads/main\n");
+        file_put_contents($dir . '/.git/config',
+            "[remote \"origin\"]\n\turl = https://user:s3cr3t-token@github.com/example/plugin.git\n");
+
+        $this->assertSame('https://github.com/example/plugin.git', $this->call_git_remote($dir));
+    }
+
+    /**
+     * An SSH short-syntax remote (no secret) is returned unchanged.
+     */
+    public function test_git_remote_ssh_unchanged(): void {
+        $dir = make_request_directory();
+        mkdir($dir . '/.git');
+        file_put_contents($dir . '/.git/HEAD', "ref: refs/heads/main\n");
+        file_put_contents($dir . '/.git/config',
+            "[remote \"origin\"]\n\turl = git@github.com:example/plugin.git\n");
+
+        $this->assertSame('git@github.com:example/plugin.git', $this->call_git_remote($dir));
     }
 
     /**
@@ -274,10 +303,13 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $dir = make_request_directory();
         $realgit = make_request_directory();
         file_put_contents($realgit . '/HEAD', "ref: refs/heads/feature/x\n");
+        file_put_contents($realgit . '/config',
+            "[remote \"origin\"]\n\turl = git@example.org:team/sub.git\n");
         file_put_contents($dir . '/.git', "gitdir: $realgit\n");
 
         $this->assertSame('git', $this->call_detect_source($dir));
         $this->assertSame('feature/x', $this->call_git_branch($dir));
+        $this->assertSame('git@example.org:team/sub.git', $this->call_git_remote($dir));
     }
 
     /**
@@ -289,14 +321,16 @@ final class get_plugin_inventory_test extends advanced_testcase {
 
         $this->assertSame('zip', $this->call_detect_source($dir));
         $this->assertSame('', $this->call_git_branch($dir));
+        $this->assertSame('', $this->call_git_remote($dir));
     }
 
     /**
-     * A non-existent directory defaults to zip (never unknown), with no branch.
+     * A non-existent directory defaults to zip (never unknown), with no branch/remote.
      */
     public function test_source_zip_for_missing_dir(): void {
         $this->assertSame('zip', $this->call_detect_source('/this/path/does/not/exist'));
         $this->assertSame('', $this->call_git_branch('/this/path/does/not/exist'));
+        $this->assertSame('', $this->call_git_remote('/this/path/does/not/exist'));
     }
 
     /**
@@ -404,6 +438,18 @@ final class get_plugin_inventory_test extends advanced_testcase {
      */
     private function call_git_branch(string $rootdir): string {
         $method = new \ReflectionMethod(get_plugin_inventory::class, 'detect_git_branch');
+        $method->setAccessible(true);
+        return $method->invoke(null, $rootdir);
+    }
+
+    /**
+     * Invoke the private static detect_git_remote() for a directory.
+     *
+     * @param string $rootdir Directory to inspect.
+     * @return string
+     */
+    private function call_git_remote(string $rootdir): string {
+        $method = new \ReflectionMethod(get_plugin_inventory::class, 'detect_git_remote');
         $method->setAccessible(true);
         return $method->invoke(null, $rootdir);
     }

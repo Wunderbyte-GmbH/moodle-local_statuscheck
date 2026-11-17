@@ -129,6 +129,7 @@ tokens issued before the upgrade can call it without being reissued.
     - `missing_from_disk` — recorded in the database but the code is gone (the recorded `version` is still reported)
 - `installation_source`: `git` or `zip` (see [Installation source](#installation-source-determination))
 - `git_branch`: the checked-out Git branch when `installation_source` is `git`; empty otherwise
+- `git_remote`: the Git remote URL (with any embedded credentials stripped) when `installation_source` is `git`; empty otherwise
 - `is_standard`: `true` if the plugin ships with core Moodle (standard), `false` if it is additional/third-party
 
 The response is intentionally limited to inventory fields. Absolute paths, Git
@@ -275,6 +276,7 @@ is deployed as a Git submodule:
       "status": "installed",
       "installation_source": "git",
       "git_branch": "main",
+      "git_remote": "https://github.com/example/moodle-mod_booking.git",
       "is_standard": false
     },
     {
@@ -284,6 +286,7 @@ is deployed as a Git submodule:
       "status": "not_installed",
       "installation_source": "zip",
       "git_branch": "",
+      "git_remote": "",
       "is_standard": false
     }
   ]
@@ -303,6 +306,7 @@ from disk is reported explicitly, with its recorded version preserved:
       "status": "missing_from_disk",
       "installation_source": "zip",
       "git_branch": "",
+      "git_remote": "",
       "is_standard": false
     }
   ]
@@ -320,10 +324,13 @@ requests are made while serving the request.
 | `git` | The plugin's own directory contains Git metadata — a `.git` **directory** (its own checkout) or a `.git` **file** (a Git submodule). The enclosing Moodle repository alone is **not** evidence, because that `.git` lives at the Moodle root, not inside the plugin directory. |
 | `zip` | Everything else: the plugin code is present but not tracked by Git, i.e. installed as a package / ZIP. This is also the default when the directory cannot be inspected. |
 
-When `installation_source` is `git`, `git_branch` is read from the checkout's
-`.git/HEAD` (following a submodule's `.git`-file `gitdir:` pointer). It reports the
-branch name only — never a path, remote URL or commit hash — and is empty for a
-detached HEAD. For `zip` plugins `git_branch` is empty.
+When `installation_source` is `git`, `git_branch` and `git_remote` are read from
+the checkout's `.git/HEAD` and `.git/config` (following a submodule's `.git`-file
+`gitdir:` pointer). `git_branch` is the branch name only (never a path or commit
+hash) and is empty for a detached HEAD. `git_remote` is the `origin` remote URL
+(or the first remote) with any embedded credentials removed — e.g.
+`https://user:token@host/repo.git` is returned as `https://host/repo.git`, so
+tokens and passwords never appear in the response. For `zip` plugins both are empty.
 
 ## Integration Examples
 
@@ -516,7 +523,7 @@ You should have received a copy of the GNU General Public License along with thi
 ### Version 1.1 (2026-11-17)
 
 - Added read-only `local_statuscheck_get_plugin_inventory` web service function
-- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch and whether the plugin is standard/additional
+- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch, git remote (credentials stripped) and whether the plugin is standard/additional
 - Supports single-plugin, multi-plugin and full-inventory lookups
 - Added to the existing **Status Check Service** (service identity preserved — pre-upgrade tokens keep working)
 - No change to the existing system status and health check endpoints

@@ -171,6 +171,7 @@ class get_plugin_inventory extends external_api {
                 'status' => self::STATUS_NOT_INSTALLED,
                 'installation_source' => self::SOURCE_ZIP,
                 'git_branch' => '',
+                'git_remote' => '',
                 'is_standard' => $isstandard,
             ];
         }
@@ -186,13 +187,16 @@ class get_plugin_inventory extends external_api {
                 'status' => self::STATUS_MISSING_FROM_DISK,
                 'installation_source' => self::SOURCE_ZIP,
                 'git_branch' => '',
+                'git_remote' => '',
                 'is_standard' => $isstandard,
             ];
         }
 
         $rootdir = (string) $info->rootdir;
         $source = self::detect_installation_source($rootdir);
-        $branch = ($source === self::SOURCE_GIT) ? self::detect_git_branch($rootdir) : '';
+        $isgit = ($source === self::SOURCE_GIT);
+        $branch = $isgit ? self::detect_git_branch($rootdir) : '';
+        $remote = $isgit ? self::detect_git_remote($rootdir) : '';
 
         return [
             'component' => $component,
@@ -201,6 +205,7 @@ class get_plugin_inventory extends external_api {
             'status' => self::STATUS_INSTALLED,
             'installation_source' => $source,
             'git_branch' => $branch,
+            'git_remote' => $remote,
             'is_standard' => $isstandard,
         ];
     }
@@ -247,32 +252,8 @@ class get_plugin_inventory extends external_api {
      * @return string Branch name, or '' when not determinable.
      */
     private static function detect_git_branch($rootdir) {
-        $rootdir = (string) $rootdir;
-        if ($rootdir === '' || !is_dir($rootdir)) {
-            return '';
-        }
-
-        $gitpath = $rootdir . DIRECTORY_SEPARATOR . '.git';
-        $gitdir = '';
-
-        if (is_dir($gitpath)) {
-            // Own checkout: .git is the git directory.
-            $gitdir = $gitpath;
-        } else if (is_file($gitpath) && is_readable($gitpath)) {
-            // Submodule: .git is a file pointing at the real git directory.
-            $raw = (string) file_get_contents($gitpath, false, null, 0, 4096);
-            if (preg_match('/^gitdir:\s*(.+)$/m', $raw, $m)) {
-                $target = trim($m[1]);
-                // Resolve a relative gitdir against the plugin directory.
-                if (!self::is_absolute_path($target)) {
-                    $target = $rootdir . DIRECTORY_SEPARATOR . $target;
-                }
-                $resolved = realpath($target);
-                $gitdir = ($resolved !== false) ? $resolved : '';
-            }
-        }
-
-        if ($gitdir === '' || !is_dir($gitdir)) {
+        $gitdir = self::resolve_git_dir($rootdir);
+        if ($gitdir === '') {
             return '';
         }
 
@@ -285,6 +266,101 @@ class get_plugin_inventory extends external_api {
         // "ref: refs/heads/<branch>" for an attached HEAD; a bare hash means detached.
         if (preg_match('#^ref:\s*refs/heads/(.+)$#', $content, $m)) {
             return trim($m[1]);
+        }
+
+        return '';
+    }
+
+    /**
+     * Read the "origin" (or first) Git remote URL of a plugin directory.
+     *
+     * Reads only .git/config locally (following a submodule's gitdir pointer). No
+     * shell commands, no remote requests. Any embedded credentials in the URL
+     * (scheme://user:secret@host/...) are stripped before returning, so tokens
+     * and passwords never reach the response.
+     *
+     * @param string $rootdir Absolute plugin directory resolved via the plugin manager.
+     * @return string Sanitised remote URL, or '' when not determinable.
+     */
+    private static function detect_git_remote($rootdir) {
+        $gitdir = self::resolve_git_dir($rootdir);
+        if ($gitdir === '') {
+            return '';
+        }
+
+        $configfile = $gitdir . DIRECTORY_SEPARATOR . 'config';
+        if (!is_file($configfile) || !is_readable($configfile)) {
+            return '';
+        }
+
+        $raw = (string) file_get_contents($configfile, false, null, 0, 65536);
+
+        // Prefer the "origin" remote; otherwise fall back to the first remote.
+        $url = '';
+        if (preg_match('/\[remote\s+"origin"\](.*?)(?=\n\[|\z)/s', $raw, $block)
+                && preg_match('/^\s*url\s*=\s*(.+)$/m', $block[1], $m)) {
+            $url = trim($m[1]);
+        } else if (preg_match('/\[remote\s+"[^"]+"\](.*?)(?=\n\[|\z)/s', $raw, $block)
+                && preg_match('/^\s*url\s*=\s*(.+)$/m', $block[1], $m)) {
+            $url = trim($m[1]);
+        }
+
+        return self::sanitise_git_url($url);
+    }
+
+    /**
+     * Strip any embedded credentials from a Git remote URL.
+     *
+     * Removes the userinfo component of a scheme URL (https://user:token@host/...
+     * becomes https://host/...). SSH short syntax (git@host:org/repo.git) carries
+     * no secret and is left intact.
+     *
+     * @param string $url Raw remote URL.
+     * @return string URL without credentials.
+     */
+    private static function sanitise_git_url($url) {
+        $url = trim((string) $url);
+        if ($url === '') {
+            return '';
+        }
+        return preg_replace('#^([a-z][a-z0-9+.\-]*://)[^/@]*@#i', '$1', $url);
+    }
+
+    /**
+     * Resolve the real Git directory for a plugin directory.
+     *
+     * Handles an own checkout (.git directory) and a submodule (.git file with a
+     * "gitdir:" pointer). Local filesystem reads only.
+     *
+     * @param string $rootdir Absolute plugin directory resolved via the plugin manager.
+     * @return string Absolute path to the git directory, or '' when not a checkout.
+     */
+    private static function resolve_git_dir($rootdir) {
+        $rootdir = (string) $rootdir;
+        if ($rootdir === '' || !is_dir($rootdir)) {
+            return '';
+        }
+
+        $gitpath = $rootdir . DIRECTORY_SEPARATOR . '.git';
+
+        if (is_dir($gitpath)) {
+            // Own checkout: .git is the git directory.
+            return $gitpath;
+        }
+
+        if (is_file($gitpath) && is_readable($gitpath)) {
+            // Submodule: .git is a file pointing at the real git directory.
+            $raw = (string) file_get_contents($gitpath, false, null, 0, 4096);
+            if (preg_match('/^gitdir:\s*(.+)$/m', $raw, $m)) {
+                $target = trim($m[1]);
+                if (!self::is_absolute_path($target)) {
+                    $target = $rootdir . DIRECTORY_SEPARATOR . $target;
+                }
+                $resolved = realpath($target);
+                if ($resolved !== false && is_dir($resolved)) {
+                    return $resolved;
+                }
+            }
         }
 
         return '';
@@ -327,6 +403,10 @@ class get_plugin_inventory extends external_api {
                     'git_branch' => new external_value(
                         PARAM_TEXT,
                         'Checked-out Git branch when installation_source is git; empty otherwise'
+                    ),
+                    'git_remote' => new external_value(
+                        PARAM_RAW_TRIMMED,
+                        'Git remote URL (credentials stripped) when installation_source is git; empty otherwise'
                     ),
                     'is_standard' => new external_value(
                         PARAM_BOOL,
