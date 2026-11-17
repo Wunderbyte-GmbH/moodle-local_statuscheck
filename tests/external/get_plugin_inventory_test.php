@@ -103,19 +103,40 @@ final class get_plugin_inventory_test extends advanced_testcase {
     }
 
     /**
-     * Omitting the parameter returns the full inventory.
+     * Omitting the parameter returns only additional (non-standard) plugins by default.
      */
-    public function test_full_inventory(): void {
+    public function test_full_inventory_additional_only(): void {
         $this->resetAfterTest();
         $this->setAdminUser();
 
         $result = get_plugin_inventory::execute();
         $indexed = $this->by_component($result);
 
-        // A standard Moodle install has many plugins.
+        // The plugin under test is additional, so it is present...
+        $this->assertArrayHasKey('local_statuscheck', $indexed);
+        // ...while core/standard plugins (e.g. mod_assign) are excluded by default.
+        $this->assertArrayNotHasKey('mod_assign', $indexed);
+        // Everything returned is non-standard.
+        foreach ($result['plugins'] as $entry) {
+            $this->assertFalse($entry['is_standard']);
+        }
+    }
+
+    /**
+     * includestandard=true adds the Moodle standard plugins back into the full inventory.
+     */
+    public function test_full_inventory_includes_standard_on_request(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $result = get_plugin_inventory::execute(null, true);
+        $indexed = $this->by_component($result);
+
         $this->assertGreaterThan(10, count($result['plugins']));
         $this->assertArrayHasKey('mod_assign', $indexed);
         $this->assertArrayHasKey('local_statuscheck', $indexed);
+        $this->assertTrue($indexed['mod_assign']['is_standard']);
+        $this->assertFalse($indexed['local_statuscheck']['is_standard']);
     }
 
     /**
@@ -214,7 +235,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
 
         $entry = $clean['plugins'][0];
         $this->assertSame(
-            ['component', 'displayname', 'version', 'status', 'installation_source'],
+            ['component', 'displayname', 'version', 'status', 'installation_source', 'is_standard'],
             array_keys($entry)
         );
     }

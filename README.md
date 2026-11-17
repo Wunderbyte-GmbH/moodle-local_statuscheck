@@ -113,10 +113,12 @@ tokens issued before the upgrade can call it without being reissued.
 
 **Parameters:**
 - `plugins` (array of component names, optional): e.g. `mod_booking`, `auth_saml2`
-    - **Omit** the parameter to return **all** installed plugins.
+    - **Omit** the parameter to return the full inventory. By default this is only the **additional (third-party) plugins** — i.e. the ones you installed — matching the "Additional plugins" section of the Moodle plugin overview. Moodle standard/core plugins are excluded unless `includestandard=1`.
     - Provide a **one-item** list for a single-plugin lookup.
     - Provide **several** items to look up multiple plugins.
     - An **explicitly empty** list returns a validation error.
+    - A plugin named explicitly is always returned, even if it is a standard plugin.
+- `includestandard` (boolean, optional, default `0`): only affects the full inventory. Set to `1` to also include Moodle standard/core-shipped plugins. Ignored when a `plugins` list is supplied.
 
 **Returns:** `plugins` — an array of entries, each with:
 - `component`: Moodle component name (e.g. `mod_booking`)
@@ -127,6 +129,7 @@ tokens issued before the upgrade can call it without being reissued.
     - `not_installed` — a valid component that is absent from this site
     - `missing_from_disk` — recorded in the database but the code is gone (the recorded `version` is still reported)
 - `installation_source`: One of `git`, `zip`, `unknown` (see [Installation source](#installation-source-determination))
+- `is_standard`: `true` if the plugin ships with core Moodle (standard), `false` if it is additional/third-party
 
 The response is intentionally limited to inventory fields. Absolute paths, Git
 remote URLs, configuration values and credentials are never included.
@@ -185,13 +188,23 @@ curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
   --data-urlencode "plugins[1]=auth_saml2"
 ```
 
-Return the **full inventory** (omit the `plugins` parameter):
+Return the **full inventory** (omit the `plugins` parameter). By default this lists only the **additional (third-party) plugins** you installed — standard core plugins are excluded:
 
 ```bash
 curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
   --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
   --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
   --data-urlencode "moodlewsrestformat=json"
+```
+
+Include **standard/core** plugins too (`includestandard=1`):
+
+```bash
+curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
+  --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
+  --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
+  --data-urlencode "moodlewsrestformat=json" \
+  --data-urlencode "includestandard=1"
 ```
 
 ### Sample Response
@@ -260,14 +273,16 @@ is deployed as a Git submodule:
       "displayname": "Booking",
       "version": 2024093000,
       "status": "installed",
-      "installation_source": "git"
+      "installation_source": "git",
+      "is_standard": false
     },
     {
       "component": "auth_saml2",
       "displayname": "",
       "version": 0,
       "status": "not_installed",
-      "installation_source": "unknown"
+      "installation_source": "unknown",
+      "is_standard": false
     }
   ]
 }
@@ -284,7 +299,8 @@ from disk is reported explicitly, with its recorded version preserved:
       "displayname": "Old widget",
       "version": 2023061500,
       "status": "missing_from_disk",
-      "installation_source": "unknown"
+      "installation_source": "unknown",
+      "is_standard": false
     }
   ]
 }

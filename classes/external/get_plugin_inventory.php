@@ -80,6 +80,15 @@ class get_plugin_inventory extends external_api {
                 'Optional list of components to look up. Omit for the full inventory. An empty list is rejected.',
                 VALUE_OPTIONAL
             ),
+            'includestandard' => new external_value(
+                PARAM_BOOL,
+                'Only affects the full inventory (when no plugins list is given): set to 1 to also include '
+                    . 'Moodle standard (core-shipped) plugins. Defaults to 0, returning only the additional '
+                    . '(third-party) plugins, matching the "Additional plugins" overview. Ignored when a '
+                    . 'plugins list is supplied.',
+                VALUE_DEFAULT,
+                0
+            ),
         ]);
     }
 
@@ -89,14 +98,15 @@ class get_plugin_inventory extends external_api {
      * @param array|null $plugins Optional list of component names. Null means "all installed plugins".
      * @return array Inventory result.
      */
-    public static function execute($plugins = null) {
-        // Validate parameters. Only pass the key when a value was supplied, so an
-        // omitted parameter falls back to the VALUE_DEFAULT (null => all plugins)
+    public static function execute($plugins = null, $includestandard = false) {
+        // Validate parameters. Only pass the plugins key when a value was supplied,
+        // so an omitted list falls back to VALUE_OPTIONAL (absent => full inventory)
         // instead of being validated as a non-array.
-        $params = self::validate_parameters(
-            self::execute_parameters(),
-            $plugins === null ? [] : ['plugins' => $plugins]
-        );
+        $cleanparams = ['includestandard' => $includestandard];
+        if ($plugins !== null) {
+            $cleanparams['plugins'] = $plugins;
+        }
+        $params = self::validate_parameters(self::execute_parameters(), $cleanparams);
 
         // Validate context and enforce the capability (standard token auth still applies).
         $context = \context_system::instance();
@@ -104,8 +114,9 @@ class get_plugin_inventory extends external_api {
         require_capability('report/status:view', $context);
 
         $requested = $params['plugins'] ?? null;
+        $includestandard = !empty($params['includestandard']);
 
-        // Distinguish "omitted" (null -> all) from an explicitly empty list (rejected).
+        // Distinguish "omitted" (null -> full inventory) from an explicitly empty list (rejected).
         if (is_array($requested) && count($requested) === 0) {
             throw new invalid_parameter_exception('The plugins list must not be empty; omit it to return all plugins.');
         }
@@ -114,14 +125,21 @@ class get_plugin_inventory extends external_api {
         $results = [];
 
         if ($requested === null) {
-            // Full inventory: every plugin the plugin manager knows on disk/in the database.
+            // Full inventory. By default only additional (non-standard) plugins are
+            // returned, matching the "Additional plugins" section of the Moodle
+            // plugin overview; Moodle standard/core-shipped plugins are included
+            // only when the caller sets includestandard.
             foreach ($pluginman->get_plugins() as $pluginsbytype) {
                 foreach ($pluginsbytype as $info) {
+                    if (!$includestandard && $info->is_standard()) {
+                        continue;
+                    }
                     $results[] = self::build_entry($info->component, $info, $pluginman);
                 }
             }
         } else {
-            // Specific components (deduplicated, order preserved).
+            // Specific components (deduplicated, order preserved). A named component
+            // is always returned regardless of whether it is standard.
             foreach (array_values(array_unique($requested)) as $component) {
                 $info = $pluginman->get_plugin_info($component);
                 $results[] = self::build_entry($component, $info, $pluginman);
@@ -150,6 +168,9 @@ class get_plugin_inventory extends external_api {
             $recordedversion = (int) $info->versiondb;
         }
 
+        // Standard = shipped with core Moodle; additional = third-party / installed.
+        $isstandard = ($info !== null) ? (bool) $info->is_standard() : false;
+
         if ($recordedversion === null && $versiondisk === null) {
             // Valid component name but nothing installed for it.
             return [
@@ -158,6 +179,7 @@ class get_plugin_inventory extends external_api {
                 'version' => 0,
                 'status' => self::STATUS_NOT_INSTALLED,
                 'installation_source' => self::SOURCE_UNKNOWN,
+                'is_standard' => $isstandard,
             ];
         }
 
@@ -171,6 +193,7 @@ class get_plugin_inventory extends external_api {
                 'version' => $recordedversion !== null ? $recordedversion : 0,
                 'status' => self::STATUS_MISSING_FROM_DISK,
                 'installation_source' => self::SOURCE_UNKNOWN,
+                'is_standard' => $isstandard,
             ];
         }
 
@@ -180,6 +203,7 @@ class get_plugin_inventory extends external_api {
             'version' => $recordedversion !== null ? $recordedversion : $versiondisk,
             'status' => self::STATUS_INSTALLED,
             'installation_source' => self::detect_installation_source((string) $info->rootdir),
+            'is_standard' => $isstandard,
         ];
     }
 
@@ -246,6 +270,10 @@ class get_plugin_inventory extends external_api {
                     'installation_source' => new external_value(
                         PARAM_ALPHA,
                         'One of: git, zip, unknown'
+                    ),
+                    'is_standard' => new external_value(
+                        PARAM_BOOL,
+                        'True if the plugin ships with core Moodle (standard); false if additional/third-party'
                     ),
                 ])
             ),
