@@ -26,15 +26,13 @@ namespace local_statuscheck\external;
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once($CFG->libdir . '/externallib.php');
-
-use external_api;
-use external_function_parameters;
-use external_value;
-use external_single_structure;
-use external_multiple_structure;
-use invalid_parameter_exception;
+use core_external\external_api;
+use core_external\external_function_parameters;
+use core_external\external_value;
+use core_external\external_single_structure;
+use core_external\external_multiple_structure;
 use core_plugin_manager;
+use invalid_parameter_exception;
 
 /**
  * External API: plugin inventory (component, display name, version, source).
@@ -80,8 +78,7 @@ class get_plugin_inventory extends external_api {
             'plugins' => new external_multiple_structure(
                 new external_value(PARAM_COMPONENT, 'Moodle component name, e.g. mod_booking or auth_saml2'),
                 'Optional list of components to look up. Omit for the full inventory. An empty list is rejected.',
-                VALUE_DEFAULT,
-                null
+                VALUE_OPTIONAL
             ),
         ]);
     }
@@ -93,17 +90,20 @@ class get_plugin_inventory extends external_api {
      * @return array Inventory result.
      */
     public static function execute($plugins = null) {
-        // Validate parameters.
-        $params = self::validate_parameters(self::execute_parameters(), [
-            'plugins' => $plugins,
-        ]);
+        // Validate parameters. Only pass the key when a value was supplied, so an
+        // omitted parameter falls back to the VALUE_DEFAULT (null => all plugins)
+        // instead of being validated as a non-array.
+        $params = self::validate_parameters(
+            self::execute_parameters(),
+            $plugins === null ? [] : ['plugins' => $plugins]
+        );
 
         // Validate context and enforce the capability (standard token auth still applies).
         $context = \context_system::instance();
         self::validate_context($context);
         require_capability('report/status:view', $context);
 
-        $requested = $params['plugins'];
+        $requested = $params['plugins'] ?? null;
 
         // Distinguish "omitted" (null -> all) from an explicitly empty list (rejected).
         if (is_array($requested) && count($requested) === 0) {
@@ -179,7 +179,7 @@ class get_plugin_inventory extends external_api {
             'displayname' => $displayname,
             'version' => $recordedversion !== null ? $recordedversion : $versiondisk,
             'status' => self::STATUS_INSTALLED,
-            'installation_source' => self::detect_installation_source($info),
+            'installation_source' => self::detect_installation_source((string) $info->rootdir),
         ];
     }
 
@@ -198,11 +198,11 @@ class get_plugin_inventory extends external_api {
      * No shell commands are executed and no remote Git requests are made; only
      * local filesystem metadata resolved through the plugin manager is read.
      *
-     * @param \core\plugininfo\base $info Plugin manager info for an on-disk plugin.
+     * @param string $rootdir Absolute plugin directory resolved via the plugin manager.
      * @return string One of SOURCE_GIT, SOURCE_ZIP, SOURCE_UNKNOWN.
      */
-    private static function detect_installation_source($info) {
-        $rootdir = (string) $info->rootdir;
+    private static function detect_installation_source($rootdir) {
+        $rootdir = (string) $rootdir;
         if ($rootdir === '' || !is_dir($rootdir)) {
             return self::SOURCE_UNKNOWN;
         }

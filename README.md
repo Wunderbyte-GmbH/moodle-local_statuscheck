@@ -452,6 +452,9 @@ local/statuscheck/
 ├── lang/
 │   └── en/
 │       └── local_statuscheck.php
+├── tests/
+│   └── external/
+│       └── get_plugin_inventory_test.php
 ├── version.php
 └── README.md
 ```
