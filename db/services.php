@@ -34,11 +34,26 @@ $functions = [
         'ajax'          => true,
         'loginrequired' => true,
     ],
+    'local_statuscheck_get_plugin_inventory' => [
+        'classname'     => 'local_statuscheck\external\get_plugin_inventory',
+        'methodname'    => 'execute',
+        'description'   => 'Get an inventory of installed plugins (component, display name, version, installation source)',
+        'type'          => 'read',
+        'capabilities'  => 'report/status:view',
+        'ajax'          => true,
+        'loginrequired' => true,
+    ],
 ];
 
+// The service identity (shortname 'statuscheck') is preserved so that tokens
+// issued before this upgrade can call the newly added function without being
+// reissued. The new function is only appended to the existing service.
 $services = [
     'Status Check Service' => [
-        'functions' => ['local_statuscheck_get_system_status'],
+        'functions' => [
+            'local_statuscheck_get_system_status',
+            'local_statuscheck_get_plugin_inventory',
+        ],
         'restrictedusers' => 1,
         'enabled' => 1,
         'shortname' => 'statuscheck',

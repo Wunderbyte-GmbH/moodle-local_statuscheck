@@ -26,13 +26,11 @@ namespace local_statuscheck\external;
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once($CFG->libdir . '/externallib.php');
-
-use external_api;
-use external_function_parameters;
-use external_value;
-use external_single_structure;
-use external_multiple_structure;
+use core_external\external_api;
+use core_external\external_function_parameters;
+use core_external\external_value;
+use core_external\external_single_structure;
+use core_external\external_multiple_structure;
 use core\check\manager;
 use core\check\result;
 
@@ -182,8 +180,11 @@ class get_system_status extends external_api {
                 $summary['total']++;
                 $summary[$status]++;
 
-            } catch (Exception $e) {
-                // Log the error but continue processing other checks.
+            } catch (\Throwable $e) {
+                // Log the error but continue processing other checks. Fully
+                // qualified so it resolves to the global throwable, not a class
+                // in this file's namespace (the previous unqualified catch never
+                // matched and so never caught anything).
                 debugging('Error processing check: ' . $e->getMessage(), DEBUG_DEVELOPER);
                 continue;
             }

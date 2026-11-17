@@ -75,7 +75,7 @@ Then visit **Site administration → Notifications** to complete installation.
 
 ### Web Service Functions
 
-The plugin provides two web service functions:
+The plugin provides three web service functions:
 
 #### 1. `local_statuscheck_get_system_status`
 
@@ -106,6 +106,38 @@ Simple health check endpoint for monitoring systems.
 - `status`: String status (ok, warning, error, critical)
 - `timestamp`: Unix timestamp of the check
 
+#### 3. `local_statuscheck_get_plugin_inventory`
+
+Read-only inventory of installed plugins. Added to the **Status Check Service**, so
+tokens issued before the upgrade can call it without being reissued.
+
+**Parameters:**
+- `plugins` (array of component names, optional): e.g. `mod_booking`, `auth_saml2`
+    - **Omit** the parameter to return the full inventory. By default this is the **"Additional plugins"** set from the Moodle plugin overview page: every non-standard (third-party) plugin, with each plugin's **subplugins nested inside it** (under a `subplugins` array). Moodle standard/core plugins are excluded. Set `includestandard=1` to return every plugin instead.
+    - Provide a **one-item** list for a single-plugin lookup (its subplugins are nested inside it).
+    - Provide **several** items to look up multiple plugins.
+    - A plugin named explicitly is always returned, even if it is standard or a subplugin.
+- `includestandard` (boolean, optional, default `0`): only affects the full inventory. Set to `1` to return **every** plugin — Moodle standard/core plugins included (subplugins still nested under their parent). Ignored when a `plugins` list is supplied.
+
+**Returns:** `plugins` — an array of entries, each with:
+- `component`: Moodle component name (e.g. `mod_booking`)
+- `displayname`: Human-readable plugin name (`""` when not installed)
+- `version`: Installed version number (`0` when not installed)
+- `status`: One of:
+    - `installed` — code present on disk and registered in the database
+    - `not_installed` — a valid component that is absent from this site
+    - `missing_from_disk` — recorded in the database but the code is gone (the recorded `version` is still reported)
+- `installation_source`: `git` or `zip` (see [Installation source](#installation-source-determination))
+- `git_branch`: the checked-out Git branch when `installation_source` is `git`; empty otherwise
+- `git_remote`: the Git remote URL (with any embedded credentials stripped) when `installation_source` is `git`; empty otherwise
+- `is_standard`: `true` if the plugin ships with core Moodle (standard), `false` if it is additional/third-party
+- `is_subplugin`: `true` if the plugin is a subplugin of a parent plugin
+- `subplugins`: an array of the plugin's subplugins (each with the same fields as above, except `subplugins`); empty when the plugin has none. Subplugins appear here, nested under their parent, rather than at the top level.
+
+The response is intentionally limited to inventory fields. Absolute paths,
+configuration values and credentials are never included (Git remote URLs are
+returned with any embedded credentials stripped).
+
 ### API Examples
 
 #### Get All Status Checks
@@ -124,6 +156,59 @@ curl "https://your-moodle.com/webservice/rest/server.php?wstoken=YOUR_TOKEN&wsfu
 
 ```bash
 curl "https://your-moodle.com/webservice/rest/server.php?wstoken=YOUR_TOKEN&wsfunction=local_statuscheck_get_health_status&moodlewsrestformat=json"
+```
+
+#### Plugin Inventory
+
+> **Pass the token in the POST body, not the URL.** Tokens in the query string
+> can leak into web-server logs, proxy logs and browser history. The examples
+> below read the token from the `MOODLE_WS_TOKEN` environment variable and send
+> it in the request body over HTTPS. Never hard-code a real token.
+
+Set the token once (keep it out of code and shell history):
+
+```bash
+export MOODLE_WS_TOKEN="your_token_here"
+```
+
+Look up a **single plugin**:
+
+```bash
+curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
+  --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
+  --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
+  --data-urlencode "moodlewsrestformat=json" \
+  --data-urlencode "plugins[0]=mod_booking"
+```
+
+Look up **several plugins**:
+
+```bash
+curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
+  --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
+  --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
+  --data-urlencode "moodlewsrestformat=json" \
+  --data-urlencode "plugins[0]=mod_booking" \
+  --data-urlencode "plugins[1]=auth_saml2"
+```
+
+Return the **full inventory** (omit the `plugins` parameter). By default this lists only the **additional (third-party) plugins** you installed — standard core plugins are excluded:
+
+```bash
+curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
+  --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
+  --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
+  --data-urlencode "moodlewsrestformat=json"
+```
+
+Include **standard/core** plugins too (`includestandard=1`):
+
+```bash
+curl -X POST "https://your-moodle.com/webservice/rest/server.php" \
+  --data-urlencode "wstoken=${MOODLE_WS_TOKEN}" \
+  --data-urlencode "wsfunction=local_statuscheck_get_plugin_inventory" \
+  --data-urlencode "moodlewsrestformat=json" \
+  --data-urlencode "includestandard=1"
 ```
 
 ### Sample Response
@@ -178,6 +263,95 @@ curl "https://your-moodle.com/webservice/rest/server.php?wstoken=YOUR_TOKEN&wsfu
   "timestamp": 1728000000
 }
 ```
+
+#### Plugin Inventory Response
+
+A request for `mod_booking` and a not-installed `auth_saml2`, where `mod_booking`
+is deployed as a Git submodule:
+
+```json
+{
+  "plugins": [
+    {
+      "component": "mod_booking",
+      "displayname": "Booking",
+      "version": 2024093000,
+      "status": "installed",
+      "installation_source": "git",
+      "git_branch": "main",
+      "git_remote": "https://github.com/example/moodle-mod_booking.git",
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": [
+        {
+          "component": "bookingcondition_example",
+          "displayname": "Example condition",
+          "version": 2024093000,
+          "status": "installed",
+          "installation_source": "git",
+          "git_branch": "main",
+          "git_remote": "https://github.com/example/moodle-mod_booking.git",
+          "is_standard": false,
+          "is_subplugin": true
+        }
+      ]
+    },
+    {
+      "component": "auth_saml2",
+      "displayname": "",
+      "version": 0,
+      "status": "not_installed",
+      "installation_source": "zip",
+      "git_branch": "",
+      "git_remote": "",
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": []
+    }
+  ]
+}
+```
+
+A plugin that is still recorded in the database but whose code has been removed
+from disk is reported explicitly, with its recorded version preserved:
+
+```json
+{
+  "plugins": [
+    {
+      "component": "block_oldwidget",
+      "displayname": "Old widget",
+      "version": 2023061500,
+      "status": "missing_from_disk",
+      "installation_source": "zip",
+      "git_branch": "",
+      "git_remote": "",
+      "is_standard": false,
+      "is_subplugin": false,
+      "subplugins": []
+    }
+  ]
+}
+```
+
+### Installation source determination
+
+`installation_source` is always either `git` or `zip`. It is derived only from **local filesystem evidence** resolved
+through Moodle's plugin manager. No shell commands are run and no remote Git
+requests are made while serving the request.
+
+| Value | How it is determined |
+|-------|----------------------|
+| `git` | The plugin's own directory contains Git metadata — a `.git` **directory** (its own checkout) or a `.git` **file** (a Git submodule). The enclosing Moodle repository alone is **not** evidence, because that `.git` lives at the Moodle root, not inside the plugin directory. |
+| `zip` | Everything else: the plugin code is present but not tracked by Git, i.e. installed as a package / ZIP. This is also the default when the directory cannot be inspected. |
+
+When `installation_source` is `git`, `git_branch` and `git_remote` are read from
+the checkout's `.git/HEAD` and `.git/config` (following a submodule's `.git`-file
+`gitdir:` pointer). `git_branch` is the branch name only (never a path or commit
+hash) and is empty for a detached HEAD. `git_remote` is the `origin` remote URL
+(or the first remote) with any embedded credentials removed — e.g.
+`https://user:token@host/repo.git` is returned as `https://host/repo.git`, so
+tokens and passwords never appear in the response. For `zip` plugins both are empty.
 
 ## Integration Examples
 
@@ -322,12 +496,16 @@ local/statuscheck/
 ├── classes/
 │   └── external/
 │       ├── get_system_status.php
-│       └── get_health_status.php
+│       ├── get_health_status.php
+│       └── get_plugin_inventory.php
 ├── db/
 │   └── services.php
 ├── lang/
 │   └── en/
 │       └── local_statuscheck.php
+├── tests/
+│   └── external/
+│       └── get_plugin_inventory_test.php
 ├── version.php
 └── README.md
 ```
@@ -362,6 +540,15 @@ You should have received a copy of the GNU General Public License along with thi
 - **Maintainer**: David Bogner <david.bogner@gmail.com>
 
 ## Changelog
+
+### Version 1.1 (2026-11-17)
+
+- Added read-only `local_statuscheck_get_plugin_inventory` web service function
+- Reports component, display name, installed version, install status, installation source (`git`/`zip`), git branch, git remote (credentials stripped), and whether the plugin is standard and/or a subplugin
+- Full inventory defaults to the overview page's "Additional plugins" set (every non-standard plugin), with subplugins nested inside their parent plugin
+- Supports single-plugin, multi-plugin and full-inventory lookups
+- Added to the existing **Status Check Service** (service identity preserved — pre-upgrade tokens keep working)
+- No change to the existing system status and health check endpoints
 
 ### Version 1.0 (2025-10-03)
 
