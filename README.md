@@ -116,7 +116,6 @@ tokens issued before the upgrade can call it without being reissued.
     - **Omit** the parameter to return the full inventory. By default this is only the **additional (third-party) plugins** — i.e. the ones you installed — matching the "Additional plugins" section of the Moodle plugin overview. Moodle standard/core plugins are excluded unless `includestandard=1`.
     - Provide a **one-item** list for a single-plugin lookup.
     - Provide **several** items to look up multiple plugins.
-    - An **explicitly empty** list returns a validation error.
     - A plugin named explicitly is always returned, even if it is a standard plugin.
 - `includestandard` (boolean, optional, default `0`): only affects the full inventory. Set to `1` to also include Moodle standard/core-shipped plugins. Ignored when a `plugins` list is supplied.
 

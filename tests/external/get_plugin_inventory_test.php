@@ -129,7 +129,7 @@ final class get_plugin_inventory_test extends advanced_testcase {
         $this->resetAfterTest();
         $this->setAdminUser();
 
-        $result = get_plugin_inventory::execute(null, true);
+        $result = get_plugin_inventory::execute([], true);
         $indexed = $this->by_component($result);
 
         $this->assertGreaterThan(10, count($result['plugins']));
@@ -189,14 +189,17 @@ final class get_plugin_inventory_test extends advanced_testcase {
     }
 
     /**
-     * An explicitly empty list is a validation error.
+     * An empty list behaves like omitting the parameter: the additional-only inventory.
      */
-    public function test_empty_list_rejected(): void {
+    public function test_empty_list_returns_full_inventory(): void {
         $this->resetAfterTest();
         $this->setAdminUser();
 
-        $this->expectException(invalid_parameter_exception::class);
-        get_plugin_inventory::execute([]);
+        $result = get_plugin_inventory::execute([]);
+        $indexed = $this->by_component($result);
+
+        $this->assertArrayHasKey('local_statuscheck', $indexed);
+        $this->assertArrayNotHasKey('mod_assign', $indexed);
     }
 
     /**
@@ -319,6 +322,38 @@ final class get_plugin_inventory_test extends advanced_testcase {
             ['externalserviceid' => $service->id, 'functionname' => 'local_statuscheck_get_system_status']));
         $this->assertTrue($DB->record_exists('external_services_functions',
             ['externalserviceid' => $service->id, 'functionname' => 'local_statuscheck_get_plugin_inventory']));
+    }
+
+    /**
+     * Exercise Moodle's positional dispatch (validate_parameters then a positional
+     * call via array_values), not just a direct execute() call. This is exactly
+     * how the web service server invokes the function, and it is what catches
+     * parameter-order regressions a direct call cannot (e.g. a VALUE_OPTIONAL
+     * parameter that, when omitted, shifts the remaining arguments).
+     */
+    public function test_positional_dispatch(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $info = \core_external\external_api::external_function_info('local_statuscheck_get_plugin_inventory');
+        $callable = [$info->classname, $info->methodname];
+
+        $dispatch = function (array $args) use ($info, $callable) {
+            $cleaned = \core_external\external_api::validate_parameters($info->parameters_desc, $args);
+            return call_user_func_array($callable, array_values($cleaned));
+        };
+
+        // Full inventory with no arguments at all (the call that previously failed).
+        $result = $dispatch([]);
+        $this->assertArrayHasKey('plugins', $result);
+
+        // includestandard only, still no plugins list.
+        $result = $dispatch(['includestandard' => 1]);
+        $this->assertArrayHasKey('plugins', $result);
+
+        // A specific plugin via dispatch.
+        $result = $dispatch(['plugins' => ['mod_assign']]);
+        $this->assertSame('mod_assign', $result['plugins'][0]['component']);
     }
 
     /**

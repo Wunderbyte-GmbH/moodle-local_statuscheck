@@ -32,7 +32,6 @@ use core_external\external_value;
 use core_external\external_single_structure;
 use core_external\external_multiple_structure;
 use core_plugin_manager;
-use invalid_parameter_exception;
 
 /**
  * External API: plugin inventory (component, display name, version, source).
@@ -75,10 +74,15 @@ class get_plugin_inventory extends external_api {
      */
     public static function execute_parameters() {
         return new external_function_parameters([
+            // NOTE: both parameters use VALUE_DEFAULT so they are always present,
+            // in a fixed order, when Moodle dispatches the (positional) call. A
+            // VALUE_OPTIONAL parameter that the caller omits is dropped from the
+            // validated set and would shift the remaining arguments.
             'plugins' => new external_multiple_structure(
                 new external_value(PARAM_COMPONENT, 'Moodle component name, e.g. mod_booking or auth_saml2'),
-                'Optional list of components to look up. Omit for the full inventory. An empty list is rejected.',
-                VALUE_OPTIONAL
+                'Optional list of components to look up. Omit (or pass an empty list) for the full inventory.',
+                VALUE_DEFAULT,
+                []
             ),
             'includestandard' => new external_value(
                 PARAM_BOOL,
@@ -98,33 +102,26 @@ class get_plugin_inventory extends external_api {
      * @param array|null $plugins Optional list of component names. Null means "all installed plugins".
      * @return array Inventory result.
      */
-    public static function execute($plugins = null, $includestandard = false) {
-        // Validate parameters. Only pass the plugins key when a value was supplied,
-        // so an omitted list falls back to VALUE_OPTIONAL (absent => full inventory)
-        // instead of being validated as a non-array.
-        $cleanparams = ['includestandard' => $includestandard];
-        if ($plugins !== null) {
-            $cleanparams['plugins'] = $plugins;
-        }
-        $params = self::validate_parameters(self::execute_parameters(), $cleanparams);
+    public static function execute($plugins = [], $includestandard = false) {
+        // Validate parameters. Both are always passed (they use VALUE_DEFAULT), so
+        // the positional dispatch order stays stable.
+        $params = self::validate_parameters(self::execute_parameters(), [
+            'plugins' => $plugins,
+            'includestandard' => $includestandard,
+        ]);
 
         // Validate context and enforce the capability (standard token auth still applies).
         $context = \context_system::instance();
         self::validate_context($context);
         require_capability('report/status:view', $context);
 
-        $requested = $params['plugins'] ?? null;
+        $requested = $params['plugins'];
         $includestandard = !empty($params['includestandard']);
-
-        // Distinguish "omitted" (null -> full inventory) from an explicitly empty list (rejected).
-        if (is_array($requested) && count($requested) === 0) {
-            throw new invalid_parameter_exception('The plugins list must not be empty; omit it to return all plugins.');
-        }
 
         $pluginman = core_plugin_manager::instance();
         $results = [];
 
-        if ($requested === null) {
+        if (empty($requested)) {
             // Full inventory. By default only additional (non-standard) plugins are
             // returned, matching the "Additional plugins" section of the Moodle
             // plugin overview; Moodle standard/core-shipped plugins are included
